@@ -18,6 +18,9 @@
         margin-top: 1rem;
         margin-bottom: 1rem;
       }
+      #datatable {
+        margin-bottom: 1rem;
+      }
     </style>
     <script type="module">
       import * as mosaic from "https://esm.sh/@uwdata/mosaic-core@0.10.0?bundle";
@@ -27,6 +30,8 @@
       let fileName = url.pathname.split("/").pop(); // "obs.parquet"
       let tableName = fileName.split(".")[0]; // "obs"
       let height = () => globalThis.innerHeight - 150;
+
+      let query = new URL(globalThis.location).searchParams.get("q");
 
       /**
        * Quak does not expose an API to format the table cells.
@@ -85,11 +90,20 @@
           `CREATE OR REPLACE TEMP TABLE ${tableName} AS SELECT * FROM read_parquet('${fileName}')`,
         ]);
 
+        if (query) {
+          await mosaic.coordinator().exec([
+            `CREATE OR REPLACE TEMP VIEW ${tableName}_view AS ${query}`,
+          ]);
+        }
+
         // create the quak datatable of the table
-        let dt = await quak.datatable(tableName, {
-          coordinator: mosaic.coordinator(),
-          height: 500,
-        });
+        let dt = await quak.datatable(
+          query ? `${tableName}_view` : tableName,
+          {
+            coordinator: mosaic.coordinator(),
+            height: 500,
+          },
+        );
 
         // Little bit of a hacky way to find the inner <table> element.
         observeTableChangesAndFormatColumnCell(dt, {
@@ -105,13 +119,34 @@
         });
 
         // append the datatable to the document body
-        document.body.appendChild(dt.node());
-      }
+        document.getElementById("datatable").appendChild(dt.node());
 
+        // Probably a better way to do this than propagating the entire SQL string to the URL
+        // We could probably have the predicates much more nicely formatted
+        // (e.g. ?organ=brain&species=homospaiens&... )
+        // but for now this "works" to demonstrate linking to another view
+        if (!query) {
+          let a = document.createElement("a");
+          a.innerText = "view subset →";
+          dt.sql.subscribe((sql) => {
+            if (!sql) return;
+            if (sql.includes("WHERE")) {
+              // show the link
+              a.style.display = "inline";
+            } else {
+              // hide the link
+              a.style.display = "none";
+            }
+            a.href = `/?q=${encodeURIComponent(sql)}`;
+          });
+          document.body.appendChild(a);
+        }
+      }
       main();
     </script>
   </head>
   <body>
     <h1>quaklas</h1>
+    <div id="datatable"></div>
   </body>
 </html>
