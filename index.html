@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>quaklas</title>
+    <style>
+      * {
+        font-family: sans-serif;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 80rem;
+      }
+      h1 {
+        font-size: 2.25rem;
+        font-weight: bold;
+        text-align: center;
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+      }
+    </style>
+    <script type="module">
+      import * as mosaic from "https://esm.sh/@uwdata/mosaic-core@0.10.0?bundle";
+      import * as quak from "https://esm.sh/jsr/@manzt/quak@0.0.0?bundle";
+
+      let url = new URL("obs.parquet", import.meta.url);
+      let fileName = url.pathname.split("/").pop(); // "obs.parquet"
+      let tableName = fileName.split(".")[0]; // "obs"
+      let height = () => globalThis.innerHeight - 150;
+
+      /**
+       * Quak does not expose an API to format the table cells.
+       *
+       * This is a little hack to observe changes (mutations) in the HTML <table>
+       * (i.e., when quak adds/removes rows) and then replace the text content of a
+       * <td> (cell) with an <a> (anchor) element that links to a URL of choice.
+       *
+       * @param {quak.DataTable} dt - the quak DataTable
+       * @param {object} options - options
+       * @param {(v: string) => HTMLElement} options.format - a function that takes the cell value and returns an HTMLElement
+       * @param {number} options.columnIndex - the 0-based index of the column to format
+       */
+      function observeTableChangesAndFormatColumnCell(dt, {
+        format,
+        columnIndex,
+      }) {
+        // Probably should avoid grabbing the shadowRoot directly...
+        let tableElement = dt.node().shadowRoot.querySelector("table");
+
+        // Create an observer instance that calls our callback anytime a mutation (DOM change) occurs
+        // https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver
+        let observer = new MutationObserver((mutations) => {
+          for (let mutation of mutations) {
+            if (!mutation.type === "childList") {
+              continue; // skip if not a childList mutation
+            }
+            for (let node of mutation.addedNodes) {
+              // zero-based index of the column to format
+              let td = node?.querySelector?.(`td:nth-child(${columnIndex + 1})`);
+              if (!td) continue;
+              let rendered = format(td.textContent);
+              td.textContent = ""; // clear the text content
+              td.appendChild(rendered);
+            }
+          }
+        });
+        observer.observe(tableElement, { childList: true, subtree: true });
+      }
+
+      async function main() {
+        // Setup mosaic (query engine) with WASM DuckDB
+        let connector = mosaic.wasmConnector();
+        mosaic.coordinator().databaseConnector(connector);
+
+        {
+          // fetch the binary parquet file and register it with the database
+          let db = await connector.getDuckDB();
+          let response = await fetch(url);
+          let bytes = new Uint8Array(await response.arrayBuffer());
+          await db.registerFileBuffer(fileName, bytes);
+        }
+
+        // create a temporary table from the parquet file in the :memory: database
+        await mosaic.coordinator().exec([
+          `CREATE OR REPLACE TEMP TABLE ${tableName} AS SELECT * FROM read_parquet('${fileName}')`,
+        ]);
+
+        // create the quak datatable of the table
+        let dt = await quak.datatable(tableName, {
+          coordinator: mosaic.coordinator(),
+          height: 500,
+        });
+
+        // Little bit of a hacky way to find the inner <table> element.
+        observeTableChangesAndFormatColumnCell(dt, {
+          columnIndex: 1,
+          format(v) {
+            let a = document.createElement("a");
+            a.innerText = v;
+            a.href = `https://github.com/cellatlas/human/tree/main/data/${v}`;
+            a.target = "_blank";
+            a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
+            return a;
+          },
+        });
+
+        // append the datatable to the document body
+        document.body.appendChild(dt.node());
+      }
+
+      main();
+    </script>
+  </head>
+  <body>
+    <h1>quaklas</h1>
+  </body>
+</html>
