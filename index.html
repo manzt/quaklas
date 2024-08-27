@@ -112,6 +112,7 @@
             let a = document.createElement("a");
             a.innerText = v;
             a.href = `https://github.com/cellatlas/human/tree/main/data/${v}`;
+            a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
             a.target = "_blank";
             a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
             return a;
