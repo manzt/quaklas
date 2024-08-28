@@ -290,11 +290,11 @@ function queryFromParams(params) {
 
   let clauses = filters.map((filter) => {
     if (filter.kind === "range") {
-      return `${filter.field} BETWEEN ${filter.values[0]} AND ${
+      return `"${filter.field}" BETWEEN ${filter.values[0]} AND ${
         filter.values[1]
       }`;
     }
-    return `${filter.field} IN (${
+    return `"${filter.field}" IN (${
       filter.values.map((v) => `'${v}'`).join(", ")
     })`;
   });
