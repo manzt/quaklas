@@ -62,7 +62,10 @@ function applyCellReformatting(dt, format) {
             continue; // skip if not a childList mutation
           }
           for (let node of mutation.addedNodes) {
-            if (!(node instanceof HTMLTableRowElement)) continue; // skip if not a table row
+            assert(
+              node instanceof HTMLTableRowElement,
+              "Expected a table row element",
+            );
             let tds = node.querySelectorAll("td");
             for (let [columnIndex, reformat] of formatters) {
               // zero-based index of the column to format
@@ -80,14 +83,11 @@ function applyCellReformatting(dt, format) {
           }
         }
       });
-      inner.observe(tableElement.querySelector("tbody"), {
-        childList: true,
-        subtree: true,
-      });
+      inner.observe(tableElement.querySelector("tbody"), { childList: true });
       outer.disconnect();
     }
   });
-  outer.observe(tableElement, { childList: true, subtree: true });
+  outer.observe(tableElement.querySelector("thead"), { childList: true });
 }
 
 /**
