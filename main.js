@@ -26,38 +26,65 @@ function assert(condition, message) {
  *
  * @param {quak.DataTable} dt - the quak DataTable
  * @param {object} options - options
- * @param {(v: string) => HTMLElement} options.format - a function that takes the cell value and returns an HTMLElement
- * @param {number} options.columnIndex - the 0-based index of the column to format
+ * @param {Record<string, (v: string) => HTMLElement>} options.format - a mapping of column name to a function that reformats the cell contents
  */
 function observeTableChangesAndFormatColumnCell(dt, {
   format,
-  columnIndex,
 }) {
   // Probably should avoid grabbing the shadowRoot directly...
   let tableElement = dt.node().shadowRoot?.querySelector("table");
   assert(tableElement, "Could not find the <table> element from the DataTable");
 
-  // Create an observer instance that calls our callback anytime a mutation (DOM change) occurs
-  // https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver
-  let observer = new MutationObserver((mutations) => {
+  // we need to wait until quak renders the table header to inspect the columns
+  let outer = new MutationObserver((mutations) => {
     for (let mutation of mutations) {
-      // @ts-expect-error - type is not defined in the TypeScript type definitions
-      if (!mutation.type == "childList") {
-        continue; // skip if not a childList mutation
+      // we just want changes to thead
+      if ("tagName" in mutation.target && mutation.target.tagName !== "THEAD") {
+        continue;
       }
-      // @ts-expect-error - type is not defined in the TypeScript type definitions
-      for (let node of mutation.addedNodes) {
-        // zero-based index of the column to format
-        /** @type {HTMLTableCellElement} */
-        let td = node?.querySelector?.(`td:nth-child(${columnIndex + 1})`);
-        if (!td?.textContent) continue;
-        let rendered = format(td.textContent);
-        td.textContent = ""; // clear the text content
-        td.appendChild(rendered);
-      }
+      // get the columns
+      let columns = Array.from(
+        tableElement.querySelectorAll("thead th div span:nth-child(1)"),
+        (th) => th.textContent,
+      );
+
+      /** @type {Array<[number, (v: string) => HTMLElement]>} */
+      let formatters = Object
+        .entries(format)
+        .map(([col, func]) => {
+          let i = columns.indexOf(col);
+          assert(i !== -1, `Column ${col} not found in the table`);
+          return [i, func];
+        });
+
+      // Create an observer instance that calls our callback anytime a mutation (DOM change) occurs
+      // https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver
+      let inner = new MutationObserver((mutations) => {
+        for (let mutation of mutations) {
+          // @ts-expect-error - type is not defined in the TypeScript type definitions
+          if (!mutation.type == "childList") {
+            continue; // skip if not a childList mutation
+          }
+          // @ts-expect-error - type is not defined in the TypeScript type definitions
+          for (let node of mutation.addedNodes) {
+            for (let [columnIndex, format] of formatters) {
+              // zero-based index of the column to format
+              /** @type {HTMLTableCellElement} */
+              let td = node?.querySelector?.(
+                `td:nth-child(${columnIndex + 2})`,
+              );
+              if (!td?.textContent) continue;
+              let rendered = format(td.textContent);
+              td.textContent = ""; // clear the text content
+              td.appendChild(rendered);
+            }
+          }
+        }
+      });
+      inner.observe(tableElement, { childList: true, subtree: true });
     }
   });
-  observer.observe(tableElement, { childList: true, subtree: true });
+  outer.observe(tableElement, { childList: true, subtree: true });
 }
 
 /**
@@ -123,14 +150,15 @@ export async function embed(el, options) {
 
   // Little bit of a hacky way to find the inner <table> element.
   observeTableChangesAndFormatColumnCell(dt, {
-    columnIndex: options.mode === "obs" ? 1 : 11,
-    format(v) {
-      let a = document.createElement("a");
-      a.innerText = v;
-      a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
-      a.target = "_blank";
-      a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
-      return a;
+    format: {
+      observation_id: (v) => {
+        let a = document.createElement("a");
+        a.innerText = v;
+        a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
+        a.target = "_blank";
+        a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
+        return a;
+      },
     },
   });
 
