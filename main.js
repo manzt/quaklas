@@ -121,35 +121,25 @@ export async function embed(el, options) {
   let connector = mosaic.wasmConnector();
   mosaic.coordinator().databaseConnector(connector);
 
-  /** @type {Array<"obs" | "cells">} */
-  let tables = options.mode === "obs" ? ["obs"] : ["obs", "cells"];
-
-  await registerTables(await connector.getDuckDB(), tables);
-
-  /** @type {Array<string>} */
-  // create a temporary table from the parquet file in the :memory: database
-  let execs = tables.map(
-    (tbl) =>
-      `CREATE OR REPLACE TABLE ${tbl} AS SELECT * FROM read_parquet('${tbl}.parquet')`,
+  await registerTables(
+    await connector.getDuckDB(),
+    options.mode === "obs" ? ["obs"] : ["obs", "cells"], // don't load the cells table if not needed
   );
-  execs.push(
-    `CREATE OR REPLACE VIEW obs_view AS ${query ?? `SELECT * FROM obs`}`,
-  );
-  if (options.mode === "cells") {
-    execs.push(
-      `CREATE OR REPLACE VIEW cells_subset AS SELECT cells.* FROM obs_view JOIN cells ON obs_view.observation_id = cells.observation_id`,
-    );
-  }
-  await mosaic.coordinator().exec(execs);
+
+  await mosaic.coordinator().exec([
+    `CREATE TABLE obs AS SELECT * FROM read_parquet('obs.parquet')`,
+    `CREATE VIEW obs_subset AS ${query ?? `SELECT * FROM obs`}`,
+    ...(options.mode === "obs" ? [] : [
+      `CREATE TABLE cells AS SELECT * FROM read_parquet('cells.parquet')`,
+      `CREATE VIEW cells_subset AS SELECT cells.* FROM obs_subset JOIN cells ON obs_subset.observation_id = cells.observation_id`,
+    ]),
+  ]);
 
   // create the quak datatable of the table
-  let dt = await quak.datatable(
-    options.mode === "cells" ? "cells_subset" : query ? "obs_view" : "obs",
-    {
-      coordinator: mosaic.coordinator(),
-      height: 500,
-    },
-  );
+  let dt = await quak.datatable(`${options.mode}_subset`, {
+    coordinator: mosaic.coordinator(),
+    height: 500,
+  });
 
   // apply custom formatters to the cells
   applyCellReformatting(dt, {
@@ -175,8 +165,9 @@ export async function embed(el, options) {
     // We could probably have the predicates much more nicely formatted
     // (e.g. ?organ=brain&species=homospaiens&... )
     // but for now this "works" to demonstrate linking to another view
+    let links = [document.createElement("a"), document.createElement("a")];
     {
-      let a = document.createElement("a");
+      let a = links[0];
       a.href = globalThis.location.href;
       a.innerText = "view subset →";
       let li = document.createElement("li");
@@ -185,7 +176,7 @@ export async function embed(el, options) {
     }
 
     {
-      let a = document.createElement("a");
+      let a = links[1];
       let url = new URL(globalThis.location.href);
       url.pathname = `${url.pathname.replace(/\/$/, "")}/cells`;
       a.href = url.href;
@@ -195,15 +186,15 @@ export async function embed(el, options) {
       ul.appendChild(li);
     }
 
-    dt.sql.subscribe((sql) => {
+    dt.sql.subscribe((/** @type {string | undefined} */ sql) => {
       if (!sql) return;
-      let url = new URL(globalThis.location.href);
-      serializeAndWriteFilterSearchParams(url.searchParams, sql);
-      for (let li of ul.children) {
-        let a = li.querySelector("a");
-        let aUrl = new URL(a.href);
-        aUrl.search = url.search;
-        a.href = aUrl.href;
+      let params = new URLSearchParams(globalThis.location.search);
+      serializeAndWriteFilterSearchParams(params, sql);
+      for (let a of links) {
+        // replace the search params on the links
+        let url = new URL(a.href);
+        url.search = params.toString();
+        a.href = url.href;
       }
     });
   }
