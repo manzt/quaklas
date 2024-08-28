@@ -121,20 +121,18 @@ export async function embed(el, options) {
     },
   );
 
-  if (options.mode === "obs") {
-    // Little bit of a hacky way to find the inner <table> element.
-    observeTableChangesAndFormatColumnCell(dt, {
-      columnIndex: 1,
-      format(v) {
-        let a = document.createElement("a");
-        a.innerText = v;
-        a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
-        a.target = "_blank";
-        a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
-        return a;
-      },
-    });
-  }
+  // Little bit of a hacky way to find the inner <table> element.
+  observeTableChangesAndFormatColumnCell(dt, {
+    columnIndex: options.mode === "obs" ? 1 : 11,
+    format(v) {
+      let a = document.createElement("a");
+      a.innerText = v;
+      a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
+      a.target = "_blank";
+      a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
+      return a;
+    },
+  });
 
   el.appendChild(dt.node());
 
