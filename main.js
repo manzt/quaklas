@@ -51,11 +51,8 @@ function observeTableChangesAndFormatColumnCell(dt, {
       /** @type {Array<[number, (v: string) => HTMLElement]>} */
       let formatters = Object
         .entries(format)
-        .map(([col, func]) => {
-          let i = columns.indexOf(col);
-          assert(i !== -1, `Column ${col} not found in the table`);
-          return [i, func];
-        });
+        .filter(([col]) => columns.includes(col)) // ignore columns that are not in the table
+        .map(([col, func]) => [columns.indexOf(col), func]);
 
       // Create an observer instance that calls our callback anytime a mutation (DOM change) occurs
       // https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver
