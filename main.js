@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
 // deno-lint-ignore-file prefer-const
 // @ts-check
 // @deno-types="npm:@uwdata/mosaic-core@0.10.0"
@@ -25,12 +26,9 @@ function assert(condition, message) {
  * <td> (cell) with an <a> (anchor) element that links to a URL of choice.
  *
  * @param {quak.DataTable} dt - the quak DataTable
- * @param {object} options - options
- * @param {Record<string, (v: string) => HTMLElement>} options.format - a mapping of column name to a function that reformats the cell contents
+ * @param {Record<string, (v: string) => HTMLElement | string>} format - a mapping of column name to a function that reformats the cell contents
  */
-function observeTableChangesAndFormatColumnCell(dt, {
-  format,
-}) {
+function applyCellReformatting(dt, format) {
   // Probably should avoid grabbing the shadowRoot directly...
   let tableElement = dt.node().shadowRoot?.querySelector("table");
   assert(tableElement, "Could not find the <table> element from the DataTable");
@@ -47,8 +45,9 @@ function observeTableChangesAndFormatColumnCell(dt, {
         tableElement.querySelectorAll("thead th div span:nth-child(1)"),
         (th) => th.textContent,
       );
+      assert(columns.length > 0, "Could not find any columns in the DataTable");
 
-      /** @type {Array<[number, (v: string) => HTMLElement]>} */
+      /** @type {Array<[number, (v: string) => HTMLElement | string]>} */
       let formatters = Object
         .entries(format)
         .filter(([col]) => columns.includes(col)) // ignore columns that are not in the table
@@ -62,23 +61,30 @@ function observeTableChangesAndFormatColumnCell(dt, {
           if (!mutation.type == "childList") {
             continue; // skip if not a childList mutation
           }
-          // @ts-expect-error - type is not defined in the TypeScript type definitions
           for (let node of mutation.addedNodes) {
-            for (let [columnIndex, format] of formatters) {
+            if (!(node instanceof HTMLTableRowElement)) continue; // skip if not a table row
+            let tds = node.querySelectorAll("td");
+            for (let [columnIndex, reformat] of formatters) {
               // zero-based index of the column to format
+              let td = tds[columnIndex + 1]; // skip index column
               /** @type {HTMLTableCellElement} */
-              let td = node?.querySelector?.(
-                `td:nth-child(${columnIndex + 2})`,
-              );
               if (!td?.textContent) continue;
-              let rendered = format(td.textContent);
-              td.textContent = ""; // clear the text content
-              td.appendChild(rendered);
+              let rendered = reformat(td.textContent);
+              td.replaceChildren();
+              if (typeof rendered === "string") {
+                td.textContent = rendered;
+              } else {
+                td.appendChild(rendered);
+              }
             }
           }
         }
       });
-      inner.observe(tableElement, { childList: true, subtree: true });
+      inner.observe(tableElement.querySelector("tbody"), {
+        childList: true,
+        subtree: true,
+      });
+      outer.disconnect();
     }
   });
   outer.observe(tableElement, { childList: true, subtree: true });
@@ -145,17 +151,16 @@ export async function embed(el, options) {
     },
   );
 
-  // Little bit of a hacky way to find the inner <table> element.
-  observeTableChangesAndFormatColumnCell(dt, {
-    format: {
-      observation_id: (v) => {
-        let a = document.createElement("a");
-        a.innerText = v;
-        a.href = `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`;
-        a.target = "_blank";
-        a.style.fontVariantNumeric = "tabular-nums"; // looks better with monospacing
-        return a;
-      },
+  // apply custom formatters to the cells
+  applyCellReformatting(dt, {
+    observation_id(v) {
+      let a = Object.assign(document.createElement("a"), {
+        innerText: v,
+        href: `https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${v}`,
+        target: "_blank",
+      });
+      a.style.fontVariantNumeric = "tabular-nums";
+      return a;
     },
   });
 
@@ -193,7 +198,7 @@ export async function embed(el, options) {
     dt.sql.subscribe((sql) => {
       if (!sql) return;
       let url = new URL(globalThis.location.href);
-      writeSearchParams(url.searchParams, sql);
+      serializeAndWriteFilterSearchParams(url.searchParams, sql);
       for (let li of ul.children) {
         let a = li.querySelector("a");
         let aUrl = new URL(a.href);
@@ -253,7 +258,7 @@ function extractFilters(sql) {
  * @param {URLSearchParams} params
  * @param {string} sql
  */
-function writeSearchParams(params, sql) {
+function serializeAndWriteFilterSearchParams(params, sql) {
   let filters = extractFilters(sql);
   for (let filter of filters) {
     if (filter.kind === "range") {
@@ -277,7 +282,7 @@ function writeSearchParams(params, sql) {
 function queryFromParams(params) {
   let filters = Array
     .from(params.entries())
-    .map(([field, value]) => readSearchParam(field, value));
+    .map(([field, value]) => deserializeFilterSearchParam(field, value));
 
   if (filters.length === 0) {
     return null;
@@ -302,7 +307,7 @@ function queryFromParams(params) {
  * @param {string} value
  * @returns {Filter}
  */
-function readSearchParam(field, value) {
+function deserializeFilterSearchParam(field, value) {
   // check first if we have '<number> <number>'
   let range = value.match(/(\d+.\d+) (\d+.\d+)/);
   if (range) {
